@@ -61,7 +61,7 @@ class Square:
     def __init__(self,board,coords):
         self.left = None
         self.right = None
-        self. up = None
+        self.up = None
         self.down = None
         self.occupied = False
         self.piece = None
@@ -69,6 +69,12 @@ class Square:
         self.board = board
     def get_coords(self):
         return self.coords
+    def is_under_attack(self, moves):
+        for move_arr in moves.iems():
+            for move in move_arr:
+                if move == self.get_coords():
+                    return True
+        return False
 class Piece:
     def __init__(self,color,piece,square):
         if color.lower() not in ['b','w','']:
@@ -76,10 +82,12 @@ class Piece:
         if piece.lower() not in ['k','q','r','b','n','p','']:
             raise ValueError("Piece must be in 'k','q','r','b','n','p',or''")
         self.color = color.lower()
-        self.piece = 'pf' if piece.lower() == "p" else piece.lower()
+        self.piece = piece.lower()
+        self.has_moved = False
         self.square = square
         self.moves = None
         self.capturable = None
+        self.sees_king = None #Only used for rooks to determine if castling is possible
     def __str__(self):
         white_pieces = {
             "k":'♔',
@@ -88,7 +96,6 @@ class Piece:
             'b':'♗',
             'n':'♘',
             'p':'♙',
-            'pf':'♙',
         }
         black_pieces = {
             "k":'♚',
@@ -97,7 +104,6 @@ class Piece:
             'b':'♝',
             'n':'♞',
             'p':'♟',
-            'pf':'♟',
         }
         if self.color == 'w':
             return white_pieces[self.piece]
@@ -108,50 +114,32 @@ class Piece:
     def __format__(self,fmt):               
         return f'{str(self):{fmt}}'
     def rook_update(self):
-        #Check left
-        pointer = self.square
-        while pointer.left:
-            pointer = pointer.left
-            self.moves.add(pointer.get_coords())
-            if pointer.occupied:
-                if assess_capturable(self,pointer.piece):
-                    self.capturable.add(pointer.get_coords())
-                else:
-                    self.moves.remove(pointer.get_coords())
-                break
-        #Check right
-        pointer = self.square
-        while pointer.right:
-            pointer = pointer.right
-            self.moves.add(pointer.get_coords())
-            if pointer.occupied:
-                if assess_capturable(self,pointer.piece):
-                    self.capturable.add(pointer.get_coords())
-                else:
-                    self.moves.remove(pointer.get_coords())
-                break
-        #Check down
-        pointer = self.square
-        while pointer.down:
-            pointer = pointer.down
-            self.moves.add(pointer.get_coords())
-            if pointer.occupied:
-                if assess_capturable(self,pointer.piece):
-                    self.capturable.add(pointer.get_coords())
-                else:
-                    self.moves.remove(pointer.get_coords())
-                break
-        #Check up
-        pointer = self.square
-        while pointer.up:
-            pointer = pointer.up
-            self.moves.add(pointer.get_coords())
-            if pointer.occupied:
-                if assess_capturable(self,pointer.piece):
-                    self.capturable.add(pointer.get_coords())
-                else:
-                    self.moves.remove(pointer.get_coords())
-                break
+        def traverse_and_update(direction_func):
+            pointer = self.square
+            has_seen_king = False #Keep track of whether a king has ever been seen
+            while direction_func(pointer):
+                pointer = direction_func(pointer)
+                self.moves.add(pointer.get_coords())
+                if pointer.occupied:
+                    if pointer.piece.piece == 'k' and pointer.piece.color == self.color: #IF we see our king, remember that
+                        has_seen_king = True 
+                    if assess_capturable(self, pointer.piece):
+                        self.capturable.add(pointer.get_coords())
+                    else:
+                        self.moves.remove(pointer.get_coords())
+                    break
+            return has_seen_king
+
+        # Define direction functions
+        directions = [lambda p: p.left, lambda p: p.right, lambda p: p.up, lambda p: p.down]
+
+        #Reset king sight before traversal
+        self.sees_king = False
+        # Traverse in all directions
+        for direction in directions:
+            if traverse_and_update(direction): #If the king was seen during iteration, update that in the Piece's memory
+                self.sees_king = True
+
     def bishop_update(self):
         #Check leftup
         pointer = self.square
@@ -316,12 +304,9 @@ class Piece:
             self.queen_update()
         elif self.piece == 'n':
             self.knight_update()
-        elif self.piece == 'pf':
-            #On a pawn's first move, they are allowed to move twice
-            self.pawn_update(first = True)
         elif self.piece == 'p':
             #On a pawn's second move, they are not allowed to move twice
-            self.pawn_update(first = False)
+            self.pawn_update(first = not self.has_moved)
         elif self.piece == "k":
             self.king_update()
         
@@ -377,11 +362,11 @@ class Board:
                     color = piece_code[0]
                     piece_type = piece_code[1]
                     square.occupied = True
-                if piece_code == 'wk':
-                    self.white_king_coords = (i,j)
-                elif piece_code == 'bk':
-                    self.black_king_coords = (i,j)
                 piece = Piece(color,piece_type,square)
+                if piece_code == 'wk':
+                    self.white_king = piece
+                elif piece_code == 'bk':
+                    self.black_king = piece
                 square.piece = piece
                 piece_row.append(piece)
             piece_arr.append(piece_row)
@@ -391,7 +376,15 @@ class Board:
         self.black_capturables = set()
         self.white_moves = {}
         self.black_moves = {}
+        self.white_castles = []
+        self.black_castles = []
+        self.check_for_white_castles = True
+        self.check_for_black_castles = True
         self.history = None
+    def white_king_coords(self):
+        return self.white_king.square.get_coords()
+    def black_king_coords(self):
+        return self.black_king.square.get_coords()
     def get_square(self,coords):
         idx_1, idx_2 = coords
         return self.squares[idx_1][idx_2]
@@ -403,11 +396,30 @@ class Board:
         square.occupied = False
         square.piece = Piece('','',square)
         self.pieces[coords[0]][coords[1]] = Piece('','',square)
-    def move_piece(self,orig_coords,new_coords):
+    def force_move(self,orig_coords,new_coords):
+        #Force a move even if it isn't valid
         new_square = self.get_square(new_coords)
         piece = self.get_piece(orig_coords)
         new_x,new_y = new_coords
-        
+        if new_coords not in piece.capturable:
+            new_square.occupied = True
+        if piece.piece == 'p' and (new_x == 0 or new_x == 7):
+            piece.piece = 'q'
+        new_square.piece = piece
+        piece.square = new_square
+        piece.has_moved = True
+        self.pieces[new_x][new_y] = piece
+        self.remove_piece(orig_coords)
+    def move_piece(self,orig_coords,new_coords,turn):
+        #Attempt to move a piece and raise an error if that move isn't possible
+        new_square = self.get_square(new_coords)
+        piece = self.get_piece(orig_coords)
+        new_x,new_y = new_coords
+        king_coords = self.white_king_coords() if turn == 'w' else self.black_king_coords()
+        castle_coords = self.white_castles if turn == 'w' else self.black_castles
+        king_castle_moves = []
+        for king_move,_ in castle_coords:
+            king_castle_moves.append(king_move)
         if new_coords in piece.moves:
             #If the new square doesn't have a piece there mark it as occupied
             if new_coords not in piece.capturable:
@@ -418,12 +430,22 @@ class Board:
             #Update the new square
             new_square.piece = piece
             piece.square = new_square
-            if piece.piece == 'pf':
-                piece.piece = 'p' #Strip the first move labels from pawns if we move them
+            piece.has_moved = True
             #Update displayable pieces
             self.pieces[new_x][new_y] = piece
             #Remove the original location of the piece
             self.remove_piece(orig_coords)
+        elif orig_coords == king_coords and new_coords in king_castle_moves:
+            for king_move, rook_position in castle_coords:
+                if king_move == new_coords:
+                    rook = self.get_piece(rook_position)
+                    if king_move[1] > rook_position[1]:
+                        #Maybe make this smarter and more dynamic eventually
+                        self.force_move(rook_position,rook.square.right.right.right.get_coords())
+                        self.force_move(orig_coords,new_coords)
+                    else:
+                        self.force_move(rook_position,rook.square.left.left.get_coords())
+                        self.force_move(orig_coords,new_coords)
         else:
             raise ValueError("Move not valid")
     def display(self):
@@ -448,7 +470,6 @@ class Board:
         final_row = final_row[::-1]
         print(board_str + final_row)
     def update_all(self):
-        
         self.black_capturables = set()
         self.white_capturables = set()
         self.black_moves = {}
@@ -456,17 +477,14 @@ class Board:
         #Update the entire board
         for row in self.pieces:
             for piece in row:
+                #print(f'Updating {coords_to_str(piece.square.get_coords())}...')
                 cpt, moves = piece.update_piece()
                 if piece.color == 'b':
                     self.black_capturables.update(cpt)
                     self.black_moves[piece.square.get_coords()] = list(moves)
-                    if piece.piece == 'k':
-                        self.black_king_coords = piece.square.get_coords() 
                 elif piece.color == 'w':
                     self.white_capturables.update(cpt)
                     self.white_moves[piece.square.get_coords()] = list(moves)
-                    if piece.piece == 'k':
-                        self.white_king_coords = piece.square.get_coords()
     
     def turn(self,color):
         valid = False
@@ -490,23 +508,90 @@ class Board:
                 print("That piece is the wrong color")
                 continue
             try:
-                self.move_piece(_from,_to)
+                self.move_piece(_from,_to,color)
                 valid = True
             except ValueError:
                 print("That is not valid move. Please try again")
         self.display()
+    def update_castles(self,turn):
+        #Overwrite the possible castles
+        if turn == 'w':
+            self.white_castles = []
+        else:
+            self.black_castles = []
+
+        #Find the rooks
+        rooks = []
+        for row in self.pieces:
+            for piece in row:
+                if piece.piece == 'r' and piece.color == turn:
+                    rooks.append(piece)
+        
+        if len(rooks) == 0:
+            return False #If there are no rooks you can't castle
+        
+        #Find the king
+        king_coords = self.white_king_coords() if turn == 'w' else self.black_king_coords()
+        king = self.get_piece(king_coords)
+        
+        #King Checks
+        if king.has_moved or (all(rook.has_moved for rook in rooks)):
+            return False
+        if self.assess_check(turn):
+            return 
+        
+        
+        #Rook cheecks
+        can_castle = False
+        for rook in rooks:
+            if rook.sees_king:
+                rook_col = rook.square.get_coords()[1]
+                attempting_board = copy.deepcopy(self)
+                attempting_king = copy.deepcopy(king_coords)
+                king_row, king_col = attempting_king
+
+                # Track whether the king's path is clear
+                path_clear = True
+
+                # If king's column is greater than the rook's column, move left; otherwise, move right
+                for _ in range(2):
+                    if king_col > rook_col:
+                        king_col -= 1
+                    else:
+                        king_col += 1
+
+                    # Force the king move on the board copy
+                    attempting_board.force_move(attempting_king, (king_row, king_col))
+                    attempting_board.update_all()
+                    
+                    # Check if the king is in check
+                    if attempting_board.assess_check(turn):
+                        path_clear = False
+                        break  # Stop checking further if the king's path is under attack
+                    
+                    # Update the king's current position
+                    attempting_king = (king_row, king_col)
+
+                # If the path is clear, the king can castle
+                if path_clear:
+                    castle_move = ((king_row, king_col),rook.square.get_coords())
+                    if turn == 'w':
+                        self.white_castles.append(castle_move)
+                    else:
+                        self.black_castles.append(castle_move)
     def assess_check(self,turn):
         if turn == 'w':
-            return self.white_king_coords in self.black_capturables
+            return self.white_king_coords() in self.black_capturables
         else:
-            return self.black_king_coords in self.white_capturables
+            return self.black_king_coords() in self.white_capturables
     def assess_checkmate(self,turn):
         temp_board = copy.deepcopy(self)
         if turn == 'w':
             for piece_cord,move_list in self.white_moves.items():
                 for move in move_list:
+                    #print(f"Looking at {coords_to_str(piece_cord)}-{coords_to_str(move)}")
                     #Try to move the new piece
-                    temp_board.move_piece(piece_cord,move)
+                    temp_board.move_piece(piece_cord,move,turn)
                     temp_board.update_all() #THIS MIGHT BE SUPER SLOW WE'LL SEE
                     #See if the new position is in check. If it's possible to get out of check it's not checkmate
                     if not temp_board.assess_check('w'):
@@ -518,7 +603,7 @@ class Board:
             for piece_cord,move_list in self.black_moves.items():
                 for move in move_list:
                     #Try to move the new piece, and update lines of sight
-                    temp_board.move_piece(piece_cord,move)
+                    temp_board.move_piece(piece_cord,move,turn)
                     temp_board.update_all()
                     #See if the new position is in check
                     if not temp_board.assess_check('b'):
@@ -529,6 +614,11 @@ class Board:
     def game_loop(self,turn):
         self.update_all() #MAYBE PLACE THIS SOMEWHERE ELSE
         long_turn = "White's" if turn == 'w' else "Black's"
+        
+        castle_status = self.check_for_white_castles if turn == 'w' else self.check_for_black_castles
+        if castle_status:
+            if self.update_castles(turn) is not None:
+                castle_status = False
         #If checkmate without check, it's a stalemate
         if not self.assess_check(turn):
             if self.assess_checkmate(turn):
@@ -550,29 +640,18 @@ class Board:
         if self.history:
             for attr, value in self.history.__dict__.items():
                 setattr(self, attr, value)
-    def play(self,numrounds = None):
+    def play(self):
         print("Let's play chess!\nInitial Board State:")
         self.display()
         turn = 'w'
-        #Eventually change to dynamic determination of if the game is over
-        if numrounds:
-            for i in range(numrounds):
-                if self.game_loop(turn):
-                    break
-                #Invert the turn
-                if turn == 'w':
-                    turn = 'b'
-                else:
-                    turn = 'w'
-        else:
-            while True:
-                if self.game_loop(turn):
-                    break
-                #Invert the turn
-                if turn == 'w':
-                    turn = 'b'
-                else:
-                    turn = 'w'
+        while True:
+            if self.game_loop(turn): #If this has a return, then the game is over!
+                break
+            #Invert the turn
+            if turn == 'w':
+                turn = 'b'
+            else:
+                turn = 'w'
 
 board = Board()
 board.play()
