@@ -1,3 +1,5 @@
+import copy #Allows the object to be copied for history
+
 def translate_input(input):
     col, row = input
     row = int(row) - 1
@@ -8,28 +10,43 @@ def translate_input(input):
 def take_user_input():
     valid = False
     while not valid:
-        _from = input("What piece would you like to move?")
+        _from = input("What piece would you like to move? (Type 'undo' to go back a move)")
+        if _from == "undo":
+            return 'undo'
+        if len(_from) != 2:
+            print("Input must be in the form a-h0-8 Ex:a1. Try again")
+            continue
         letter = _from[0]
         num = _from[1]
-        if len(_from) < 2 or letter not in 'abcdefgh' or num not in '12345678':
+        if letter not in 'abcdefgh' or num not in '12345678':
             print("Input must be in the form a-h0-8 Ex:a1. Try again")
+            continue
         _from = translate_input(_from)
         valid = True
     valid = False
     while not valid:
-        _to = input("Where would you to move it?")
+        _to = input("Where would like you to move it?")
+        if len(_to) != 2:
+            print("Input must be in the form a-h0-8 Ex:a1. Try again")
+            continue
         letter = _to[0]
         num = _to[1]
-        if len(_from) < 2 or letter not in 'abcdefjh' or num not in '12345678':
+        if len(_from) < 2 or letter not in 'abcdefgh' or num not in '12345678':
             print("Input must be in the form a-h0-8 Ex:a1. Try again")
+            continue
         _to = translate_input(_to)
-        
         valid = True
     return (_from,_to)
+
 def assess_capturable(piece,other_piece):
     piece_color = piece.color
     other_piece_color = other_piece.color
     return piece_color != other_piece_color
+
+def coords_to_str(coords):
+    x,y = coords
+    map = {0:'a',1:'b',2:'c',3:'d',4:'e',5:'f',6:'g',7:'h'}
+    return f'{map[x]}{y + 1}'
 
 class Square:
     def __init__(self,board,coords):
@@ -212,11 +229,22 @@ class Piece:
                 pointer = pointer.down
                 if not pointer.occupied:
                     self.moves.add(pointer.get_coords())
-                if first and pointer.down:
-                    pointer = pointer.down
-                    if not pointer.occupied:
-                        self.moves.add(pointer.get_coords())
-        #Caputrable pieces
+                    #If first move, repeat this
+                    if first and pointer.down:
+                        pointer = pointer.down
+                        if not pointer.occupied:
+                            self.moves.add(pointer.get_coords())
+        else:
+            if pointer.up:
+                pointer = pointer.up
+                if not pointer.occupied:
+                    self.moves.add(pointer.get_coords())
+                    #If first move, repeat this
+                    if first and pointer.up:
+                        pointer = pointer.up
+                        if not pointer.occupied:
+                            self.moves.add(pointer.get_coords())
+        #Caputrable pieces ondiagonals
         if self.color == 'w':
             if self.square.right:
                 pointer = self.square.down.right
@@ -273,22 +301,24 @@ class Piece:
         
         if self.piece == 'r':
             self.rook_update()
-        if self.piece == 'b':
+        elif self.piece == 'b':
             self.bishop_update()
-        if self.piece == 'q':
+        elif self.piece == 'q':
             self.queen_update()
-        if self.piece == 'n':
+        elif self.piece == 'n':
             self.knight_update()
-        if self.piece == 'pf':
+        elif self.piece == 'pf':
             #On a pawn's first move, they are allowed to move twice
             self.pawn_update(first = True)
-            self.piece = 'p'
-        else:
+        elif self.piece == 'p':
+            #On a pawn's second move, they are not allowed to move twice
             self.pawn_update(first = False)
-        if self.piece == "k":
+        elif self.piece == "k":
             self.king_update()
+        
+        return (self.capturable,self.moves)
     def display_info(self):
-        print(f'Piece: {str(self)}')
+        print(f'Piece: {self.piece} or {str(self)}')
         print(f'Capturable Pieces: {self.capturable}')
         print(f'Valid Moves: {self.moves}')
 class Board:
@@ -338,12 +368,21 @@ class Board:
                     color = piece_code[0]
                     piece_type = piece_code[1]
                     square.occupied = True
+                if piece_code == 'wk':
+                    self.white_king_coords = (i,j)
+                elif piece_code == 'bk':
+                    self.black_king_coords = (i,j)
                 piece = Piece(color,piece_type,square)
                 square.piece = piece
                 piece_row.append(piece)
             piece_arr.append(piece_row)
         self.squares = board_arr
         self.pieces = piece_arr
+        self.white_capturables = set()
+        self.black_capturables = set()
+        self.white_moves = {}
+        self.black_moves = {}
+        self.history = None
     def get_square(self,coords):
         idx_1, idx_2 = coords
         return self.squares[idx_1][idx_2]
@@ -356,17 +395,22 @@ class Board:
         square.piece = Piece('','',square)
         self.pieces[coords[0]][coords[1]] = Piece('','',square)
     def move_piece(self,orig_coords,new_coords):
-        square = self.get_square(orig_coords)
         new_square = self.get_square(new_coords)
         piece = self.get_piece(orig_coords)
         new_x,new_y = new_coords
+        
         if new_coords in piece.moves:
             #If the new square doesn't have a piece there mark it as occupied
             if new_coords not in piece.capturable:
                 new_square.occupied = True
+            #Promotion
+            if piece.piece == 'p' and (new_x == 0 or new_x == 7):
+                piece.piece = 'q'
             #Update the new square
             new_square.piece = piece
             piece.square = new_square
+            if piece.piece == 'pf':
+                piece.piece = 'p' #Strip the first move labels from pawns if we move them
             #Update displayable pieces
             self.pieces[new_x][new_y] = piece
             #Remove the original location of the piece
@@ -374,17 +418,7 @@ class Board:
         else:
             raise ValueError("Move not valid")
     def display(self):
-        # counter = 8
-        # overscore = '-'
-        # for row in reversed(self.pieces):
-        #     print(overscore * 40)
-        #     s = f'{counter} | {"|".join(f"{str(piece):^3}" for piece in row)}'
-        #     counter -= 1
-        #     print(s)
-        # print(overscore * 40)
-        # 
-        # s = f'  | {"|".join(f"{str(letter):^}" for letter in letters)}'
-        # print(s+"\n")
+        #Print the board to the console
         board = self.pieces
         board_str = ""
         final_row = ""
@@ -405,17 +439,42 @@ class Board:
         final_row = final_row[::-1]
         print(board_str + final_row)
     def update_all(self):
+        
+        self.black_capturables = set()
+        self.white_capturables = set()
+        self.black_moves = {}
+        self.white_moves = {}
         #Update the entire board
         for row in self.pieces:
             for piece in row:
-                piece.update_piece()
+                cpt, moves = piece.update_piece()
+                if piece.color == 'b':
+                    self.black_capturables.update(cpt)
+                    self.black_moves[piece.square.get_coords()] = list(moves)
+                    if piece.piece == 'k':
+                        self.black_king_coords = piece.square.get_coords() 
+                elif piece.color == 'w':
+                    self.white_capturables.update(cpt)
+                    self.white_moves[piece.square.get_coords()] = list(moves)
+                    if piece.piece == 'k':
+                        self.white_king_coords = piece.square.get_coords()
+    
     def turn(self,color):
-        self.update_all()
-        
         valid = False
         while not valid:
-            _from, _to = take_user_input()
-            if self.get_piece(_from).color != color:
+            inp = take_user_input()
+            if type(inp) == tuple:
+                _from, _to = inp
+            else:
+                print("Undoing...")
+                self.undo() #Call undo twice, because history is assigned right before the turn function is called
+                self.undo()
+                self.display()
+                return
+            if self.get_piece(_from).color == "":
+                print("There is no piece at that location")
+                continue
+            elif self.get_piece(_from).color != color:
                 print("That piece is the wrong color")
                 continue
             try:
@@ -424,22 +483,49 @@ class Board:
             except ValueError:
                 print("That is not valid move. Please try again")
         self.display()
-    def play(self):
+    def assess_check(self,turn):
+        if turn == 'w':
+            return self.white_king_coords in self.black_capturables
+        else:
+            return self.black_king_coords in self.white_capturables
+    
+    def game_loop(self,turn):
+        self.update_all() #MAYBE PLACE THIS SOMEWHERE ELSE
+        long_turn = "White's" if turn == 'w' else "Black's"
+        if not self.assess_check(turn):
+            print(f"It's {long_turn} turn! Make a move.")
+        else:
+            print(f"It's {long_turn} turn! Be careful, you're in check!")
+            
+        board_copy = copy.deepcopy(self)#Copy the status of the board
+        self.history = board_copy
+        self.turn(turn)
+    def undo(self):
+        #Completely reassign the object
+        if self.history:
+            for attr, value in self.history.__dict__.items():
+                setattr(self, attr, value)
+    def play(self,numrounds = None):
         print("Let's play chess!\nInitial Board State:")
         self.display()
         turn = 'w'
         #Eventually change to dynamic determination of if the game is over
-        while True:
-            long_turn = "White's" if turn == 'w' else "Black's"
-            print(f"It's {long_turn} turn! Make a move.")
-            self.turn(turn)
-            #Invert the turn
-            if turn == 'w':
-                turn = 'b'
-            else:
-                turn = 'w'
+        if numrounds:
+            for i in range(numrounds):
+                self.game_loop(turn)
+                #Invert the turn
+                if turn == 'w':
+                    turn = 'b'
+                else:
+                    turn = 'w'
+        else:
+            while True:
+                self.game_loop(turn)
+                #Invert the turn
+                if turn == 'w':
+                    turn = 'b'
+                else:
+                    turn = 'w'
 
 board = Board()
-board.update_all()
-pawn = board.get_piece(translate_input('e2'))
-pawn.display_info()
+board.play(numrounds=3)
