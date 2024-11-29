@@ -45,7 +45,16 @@ def assess_capturable(piece,other_piece):
 
 def coords_to_str(coords):
     x,y = coords
-    map = {0:'a',1:'b',2:'c',3:'d',4:'e',5:'f',6:'g',7:'h'}
+    map = {
+        0:'a',
+        1:'b',
+        2:'c',
+        3:'d',
+        4:'e',
+        5:'f',
+        6:'g',
+        7:'h'
+    }
     return f'{map[x]}{y + 1}'
 
 class Square:
@@ -498,6 +507,7 @@ class Board:
                 for move in move_list:
                     #Try to move the new piece
                     temp_board.move_piece(piece_cord,move)
+                    temp_board.update_all() #THIS MIGHT BE SUPER SLOW WE'LL SEE
                     #See if the new position is in check. If it's possible to get out of check it's not checkmate
                     if not temp_board.assess_check('w'):
                         return False
@@ -507,8 +517,9 @@ class Board:
         else:
             for piece_cord,move_list in self.black_moves.items():
                 for move in move_list:
-                    #Try to move the new piece
+                    #Try to move the new piece, and update lines of sight
                     temp_board.move_piece(piece_cord,move)
+                    temp_board.update_all()
                     #See if the new position is in check
                     if not temp_board.assess_check('b'):
                         return False
