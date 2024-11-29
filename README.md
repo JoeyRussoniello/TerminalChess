@@ -1,6 +1,6 @@
 # TerminalChess
 
-A Python-based library for managing and playing chess games. This library offers a robust implementation of chess game mechanics, including board management, move validation, check/checkmate detection, and user input handling. Ideal for building chess-related applications or integrating chess functionality into larger projects.
+A Python-based library for managing and playing chess games. This library offers a robust implementation of chess game mechanics using graph algorithms, Dynamic Programming, and OOP. Features include board management, move validation, check/checkmate detection, and user input handling. 
 
 ## Table of Contents
 
