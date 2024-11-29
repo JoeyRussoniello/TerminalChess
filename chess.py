@@ -466,10 +466,13 @@ class Board:
             if type(inp) == tuple:
                 _from, _to = inp
             else:
-                print("Undoing...")
-                self.undo() #Call undo twice, because history is assigned right before the turn function is called
-                self.undo()
-                self.display()
+                if inp == 'undo' and self.history.history:
+                    self.undo() #Call undo twice, because history is assigned right before the turn function is called
+                    self.undo()
+                    self.display()
+                elif inp == 'undo' and not self.history.history:
+                    print("There are no more moves to undo...Please add a valid move")
+                    self.turn(color) #call itself recursively then return if no space
                 return
             if self.get_piece(_from).color == "":
                 print("There is no piece at that location")
@@ -488,13 +491,44 @@ class Board:
             return self.white_king_coords in self.black_capturables
         else:
             return self.black_king_coords in self.white_capturables
-    
+    def assess_checkmate(self,turn):
+        temp_board = copy.deepcopy(self)
+        if turn == 'w':
+            for piece_cord,move_list in self.white_moves.items():
+                for move in move_list:
+                    #Try to move the new piece
+                    temp_board.move_piece(piece_cord,move)
+                    #See if the new position is in check. If it's possible to get out of check it's not checkmate
+                    if not temp_board.assess_check('w'):
+                        return False
+                    temp_board = copy.deepcopy(self)
+            #If no moves get out of check, then 
+            return True
+        else:
+            for piece_cord,move_list in self.black_moves.items():
+                for move in move_list:
+                    #Try to move the new piece
+                    temp_board.move_piece(piece_cord,move)
+                    #See if the new position is in check
+                    if not temp_board.assess_check('b'):
+                        return False
+                    temp_board = copy.deepcopy(self)
+            return True
+        
     def game_loop(self,turn):
         self.update_all() #MAYBE PLACE THIS SOMEWHERE ELSE
         long_turn = "White's" if turn == 'w' else "Black's"
+        #If checkmate without check, it's a stalemate
         if not self.assess_check(turn):
+            if self.assess_checkmate(turn):
+                print("STALEMATE! It's a draw.")
+                return 'end'
             print(f"It's {long_turn} turn! Make a move.")
         else:
+            if self.assess_checkmate(turn):
+                long_name = "Black" if turn == 'w' else "White"
+                print(f"CHECKMATE! {long_name} WINS!!")
+                return 'end'
             print(f"It's {long_turn} turn! Be careful, you're in check!")
             
         board_copy = copy.deepcopy(self)#Copy the status of the board
@@ -512,7 +546,8 @@ class Board:
         #Eventually change to dynamic determination of if the game is over
         if numrounds:
             for i in range(numrounds):
-                self.game_loop(turn)
+                if self.game_loop(turn):
+                    break
                 #Invert the turn
                 if turn == 'w':
                     turn = 'b'
@@ -520,7 +555,8 @@ class Board:
                     turn = 'w'
         else:
             while True:
-                self.game_loop(turn)
+                if self.game_loop(turn):
+                    break
                 #Invert the turn
                 if turn == 'w':
                     turn = 'b'
@@ -528,4 +564,4 @@ class Board:
                     turn = 'w'
 
 board = Board()
-board.play(numrounds=3)
+board.play()
